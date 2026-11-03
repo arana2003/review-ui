@@ -112,6 +112,8 @@ export default function ReviewPage() {
   const [airlockOn, setAirlockOn] = useState(true);
   const [log, setLog] = useState<string[]>([]);
   const [decision, setDecision] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
 
   const activeSpan = useMemo(
     () => SAMPLE_CLAIMS.find((c) => c.id === activeClaim)?.span ?? null,
@@ -124,12 +126,58 @@ export default function ReviewPage() {
     return airlockOn ? text.replace(PII_PATTERN, "[REDACTED]") : text;
   }
 
-  function act(action: string) {
+  async function act(action: string) {
+    if (submitting) return;
+    setSubmitting(true);
+    setResult(null);
     setDecision(action);
-    setLog((prev) => [
-      `${new Date().toLocaleTimeString()}  ${action}  (${SAMPLE_DOCUMENT.id})`,
-      ...prev,
-    ]);
+    const time = new Date().toLocaleTimeString();
+
+    try {
+      const res = await fetch("/api/submit", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          documentId: SAMPLE_DOCUMENT.id,
+          action,
+          airlockOn,
+          // Send the same masked text the operator sees.
+          claims: SAMPLE_CLAIMS.map((c) => ({
+            id: c.id,
+            text: redact(c.text),
+            confidence: c.confidence,
+          })),
+          checks: SAMPLE_CHECKS.map((k) => ({ id: k.id, status: k.status })),
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        remainingRequests?: number;
+      };
+
+      if (res.ok) {
+        setResult({
+          ok: true,
+          text: `${action}: recorded by the gateway (${data.remainingRequests ?? 0} requests left in this window).`,
+        });
+        setLog((prev) => [`${time}  ${action}  recorded (${SAMPLE_DOCUMENT.id})`, ...prev]);
+      } else {
+        const retry = res.status === 429 ? " Wait 10 seconds, then try again." : "";
+        setResult({
+          ok: false,
+          text: `${action} failed (HTTP ${res.status}): ${data.error ?? "unknown error"}${retry}`,
+        });
+        setLog((prev) => [
+          `${time}  ${action}  FAILED ${res.status} (${SAMPLE_DOCUMENT.id})`,
+          ...prev,
+        ]);
+      }
+    } catch {
+      setResult({ ok: false, text: `${action} failed: could not reach the review service.` });
+      setLog((prev) => [`${time}  ${action}  FAILED network (${SAMPLE_DOCUMENT.id})`, ...prev]);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -255,26 +303,37 @@ export default function ReviewPage() {
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => act("Approved")}
-                className="rounded bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+                disabled={submitting}
+                className="rounded bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
               >
                 Approve
               </button>
               <button
                 onClick={() => act("Request re-filing")}
-                className="rounded border border-slate-300 px-3 py-1.5 text-sm font-medium hover:bg-slate-50"
+                disabled={submitting}
+                className="rounded border border-slate-300 px-3 py-1.5 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
               >
                 Request re-filing
               </button>
               <button
                 onClick={() => act("Flagged for manual audit")}
-                className="rounded border border-amber-400 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-900 hover:bg-amber-100"
+                disabled={submitting}
+                className="rounded border border-amber-400 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
               >
                 Flag for manual audit
               </button>
             </div>
-            {decision && (
-              <p className="mt-3 text-sm text-slate-600">
-                Last action: <span className="font-medium">{decision}</span>
+            {submitting && (
+              <p role="status" className="mt-3 text-sm text-slate-500">
+                Sending {decision}…
+              </p>
+            )}
+            {!submitting && result && (
+              <p
+                role="status"
+                className={`mt-3 text-sm ${result.ok ? "text-emerald-700" : "text-rose-700"}`}
+              >
+                {result.text}
               </p>
             )}
             <ol className="mt-4 space-y-1 font-mono text-xs text-slate-600">
