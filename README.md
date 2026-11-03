@@ -13,6 +13,20 @@ npm run dev
 
 Open http://localhost:3001 (the app uses port 3001 so it doesn't clash with the gateway on 3000).
 
+## Pages
+
+- `/` — review queue: the sample documents with a status for each
+- `/documents/[id]` — review: source text with highlighted claims, PII masking, verification checks, and sign-off
+- `/history` — sign-off history, saved in this browser's localStorage
+
+## Tests
+
+```bash
+npm test
+```
+
+Vitest and Testing Library cover the masking logic, queue status, the history store (including corrupt storage and the 200-entry cap), and the review panel's sign-off flow, including rate-limit and network errors.
+
 ## Connect to the gateway
 
 Sign-offs are sent to the gateway's `/api/ingest` route through a server-side route at `app/api/submit`. Set these in `.env.local` (see `.env.example`):
